@@ -1,0 +1,1436 @@
+---
+title: "Urban vs Rural Classifications"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+#install.packages("GGally")
+#install.packages("ggExtra")
+#install.packages("ggalluvial")
+#install.packages("plotly")
+#install.packages("psych")
+#install.packages("descr")
+
+#This is to spatially plot data onto a map, if you need
+library("GGally")
+library("ggExtra")
+library("ggalluvial")
+library("plotly")
+library(sf)
+library(sp)
+library(psych)
+# Load already installed packages
+library("data.table")
+library(descr)
+
+
+# we will also use cowplot later in this session.
+# Please install it but do not load it for now.
+#install.packages("cowplot")
+```
+
+##load ACS population data
+```{r}
+ACS_zcta_2011 <- read.csv("~/Dropbox/Year Two/Thesis/Raw Data/CleanedACS2011PopulationZCTA.csv")
+```
+
+#select only total population and zcta
+```{r}
+Population_ZCTA_2011 <- ACS_zcta_2011 %>% select(ZCTA, Total.population)
+```
+
+#join with LST by zip code
+```{r}
+pop_lst_join <- celsius_CA_ZCTA %>% left_join(Population_ZCTA_2011, by = 'ZCTA')
+```
+
+#load county/regional data and join it to population dataset
+#https://census.ca.gov/regions/
+```{r}
+zip_by_county <- read.csv("~/Dropbox/Year Two/Thesis/Raw Data/CA_Zip_County_Data.csv")
+
+county_zip_pop <- pop_lst_join %>% left_join(zip_by_county, by = 'ZCTA')
+
+#remove LST column
+county_zip_pop <- county_zip_pop %>% select(-LST_Night_1km.x)
+```
+
+
+#group by regions, are there main cities in these regions?
+#https://www.california-demographics.com/cities_by_population
+#eventually, you must justify the choice of these 7 cities
+#exclusion criteria were based on the CalEPA's designation of UHIs for California:
+#https://calepa.ca.gov/urban-heat-island-interactive-maps-2/, https://calepa.ca.gov/wp-content/uploads/sites/6/2016/10/UrbanHeat-Report-Report.pdf
+#all cities that are considered UHIs are also considered to have their zip codes as urban, but are not one of the seven focus cities for this study, all other zip codes in each region are considered rural
+```{r}
+region1 <- county_zip_pop %>% filter(region == 1) #sacramento, EXCLUDE: Davis, 
+region2 <- county_zip_pop %>% filter(region == 2) #EXCLUDE: napa, santa rosa
+region3 <- county_zip_pop %>% filter(region == 3) #san francisco, oakland, san jose, EXCLUDE: fairfield, san rafael, livermore, morgan hill, vallejo, walnut creek, antioch
+region4 <- county_zip_pop %>% filter(region == 4) #EXCLUDE: lodi, manteca, merced, stanislaus, los banos, newman, wasco
+region5 <- county_zip_pop %>% filter(region == 5) #EXCLUDE: hollister, watsonville, oceano, salinas, san luis obisbo, santa cruz, simi valley
+region6 <- county_zip_pop %>% filter(region == 6) #fresno, EXCLUDE: bakersfield, coalinga
+region7 <- county_zip_pop %>% filter(region == 7) #EXCLUDE: victorville
+region8 <- county_zip_pop %>% filter(region == 8) #los angeles, EXCLUDE: lancaster, san fernando, santa clarita, 
+region9 <- county_zip_pop %>% filter(region == 9) #EXCLUDE: mission viejo,
+region10 <- county_zip_pop %>% filter(region == 10) #san diego, EXCLUDE: oceanside, ramona
+write.csv(county_zip_pop, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/county_zip_pop.csv", row.names=FALSE)
+```
+
+#REGION 1
+#Descriptive range of urban (Sacramento) and rural LST for REGION 1
+```{r}
+#urban vs rural (as based on whether the zip code falls within the city limits of the main city in the region)
+reg1_urb <- region1 %>% filter(primary_city == "Sacramento") %>%  mutate('date' = make_date(year = year, month = month))
+
+reg1_rur <- region1 %>% filter(primary_city != "Sacramento" & primary_city != "Davis")
+
+reg1_rurlst <- reg1_rur %>% group_by(year, month) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius)) %>%
+  mutate(region = 1) %>%
+ mutate('date' = make_date(year = year, month = month))
+
+                  #sd = sd(celsius),
+                 # min = min(celsius),
+                 # max = max(celsius))
+
+
+reg1_urblst <- reg1_urb %>% group_by(year, month) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>% 
+    mutate(region = 1) %>%
+   mutate('date' = make_date(year = year, month = month))
+
+
+#head(reg1_urblst)
+#head(reg1_rurlst)
+
+#subtract average rural LST for region from each urban zip code for that region
+# urbanLSTi - MEAN(ruralLST) = deltaLSTi
+# i = zipcode
+reg1_dLST_uu <- reg1_urb %>% 
+  left_join(reg1_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - min)
+reg1_dLST_ur <- reg1_urb %>% 
+  left_join(reg1_rurlst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - mean)
+
+#export CSV
+write.csv(reg1_dLST_ur, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg1_dLST_ur.csv", row.names=FALSE)
+write.csv(reg1_dLST_uu, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg1_dLST_uu.csv", row.names=FALSE)
+```
+
+#REGION 1 Plotting
+#https://bookdown.org/danieljcarter/r4epi/integrating-summarising-and-visualising.html
+#Regression Modeling
+#https://community.rstudio.com/t/insert-regression-model-into-ggplot2/2439/2
+```{r}
+
+plot1ur <- ggplot(reg1_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+    geom_smooth(method = "lm", col = "black") +
+  labs(title = "Sacramento Urban minus Rural",
+       col = "ZCTAs") +
+  facet_wrap(~ZCTA)
+
+plot1uu <- ggplot(reg1_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  geom_smooth(method = "lm", col = "black") +
+  labs(title = "Sacramento Urban minus Urban Min",
+       col = "ZCTAs") +
+  facet_wrap(~ZCTA)
+
+plot1ur
+plot1uu
+
+```
+
+#Region 1 descriptive statistics, boxplots: max, min, etc
+#https://statisticsglobe.com/boxplot-in-r
+#https://www.datanovia.com/en/blog/ggplot-legend-title-position-and-labels/
+```{r}
+#mean, median, max
+ds_reg1_uu <- reg1_dLST_uu %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 1)
+
+ds_reg1_ur <- reg1_dLST_ur %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 1)
+
+ggplot(reg1_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Sacramento Urban minus Rural Distribution 
+       by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+ggplot(reg1_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Sacramento Urban minus Mean Urban Distribution 
+       by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+```
+
+
+#REGION 3
+#Descriptive range of urban (San Francisco, Oakland, San Jose) and rural LST for REGION 3
+```{r}
+#urban vs rural (as based on whether the zip code falls within the city limits of the main city in the region)
+reg3_urb <- region3 %>% filter(primary_city == "San Francisco" | primary_city == "Oakland" | primary_city == "San Jose") %>%  mutate('date' = make_date(year = year, month = month))
+reg3_rur <- region3 %>% filter(primary_city != "San Francisco" & primary_city != "Oakland" & primary_city != "San Jose"  & primary_city != "Fairfield"  & primary_city != "San Rafael"  & primary_city != "Livermore"  & primary_city != "Morgan Hill"  & primary_city != "Vallejo"  & primary_city != "Walnut Creek"  & primary_city != "Antioch")
+
+reg3_rurlst <- reg3_rur %>% group_by(year, month, region) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius)) %>%
+  mutate(region = 3) %>%  
+  mutate('date' = make_date(year = year, month = month))
+
+                  #sd = sd(celsius),
+                 # min = min(celsius),
+                 # max = max(celsius))
+
+
+reg3_urblst <- reg3_urb %>% group_by(year, month, primary_city) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius),
+                  sd = sd(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>% 
+    mutate(region = 3) %>%
+  mutate('date' = make_date(year = year, month = month))
+
+
+head(reg3_urblst)
+head(reg3_rurlst)
+
+reg3sf_urblst <- reg3_urblst %>% filter(primary_city == "San Francisco")
+reg3oak_urblst <- reg3_urblst %>% filter(primary_city == "Oakland")
+reg3sj_urblst <- reg3_urblst %>% filter(primary_city == "San Jose")
+
+#subtract average rural LST for region from each urban zip code for that region
+# urbanLSTi - MEAN(ruralLST) = deltaLSTi
+# i = zipcode
+#SF
+reg3sf_dLST_uu <- reg3_urb %>% 
+  left_join(reg3sf_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y", -"primary_city.y") %>%
+  filter(primary_city.x != "Oakland" & primary_city.x != "San Jose") %>%
+  mutate(dLST = celsius - min) %>%
+  rename(primary_city = primary_city.x)
+
+reg3_dLST_ur <- reg3_urb %>% 
+  left_join(reg3_rurlst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - mean)
+
+#OAKLAND
+reg3oak_dLST_uu <- reg3_urb %>% 
+  left_join(reg3oak_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+    filter(primary_city.x != "San Francisco" & primary_city.x != "San Jose") %>%
+  mutate(dLST = celsius - min) %>%
+    rename(primary_city = primary_city.x)
+
+
+#SJ
+reg3sj_dLST_uu <- reg3_urb %>% 
+  left_join(reg3sj_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+      filter(primary_city.x != "San Francisco" & primary_city.x != "Oakland") %>%
+  mutate(dLST = celsius - min) %>%
+      rename(primary_city = primary_city.x)
+
+
+
+
+#export CSV
+write.csv(reg3_dLST_ur, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg3_dLST_ur.csv", row.names=FALSE)
+write.csv(reg3_dLST_uu, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg3_dLST_uu.csv", row.names=FALSE)
+```
+
+#REGION 3 Plotting
+```{r}
+
+plot3ur <- ggplot(reg3_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  labs(title = "San Francisco, Oakland, San Jose Urban minus Rural Min",
+       col = "City") +
+  facet_wrap(~primary_city)
+
+#SF
+plot3sfuu <- ggplot(reg3sf_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+   labs(title = "San Francisco Urban minus Urban Min",
+       col = "ZCTA") +
+  facet_wrap(~ZCTA)
+
+#OAK
+plot3oakuu <- ggplot(reg3oak_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+   labs(title = "Oakland Urban minus Urban Min",
+       col = "ZCTA") +
+  facet_wrap(~ZCTA)
+
+#SJ
+plot3sjuu <- ggplot(reg3sj_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+   labs(title = "San Jose Urban minus Urban Min",
+       col = "ZCTA") +
+  facet_wrap(~ZCTA)
+
+boxplot3sfuu 
+plot3sfuu
+plot3oakuu
+plot3sjuu
+plot3ur
+```
+
+
+#Region 3 Descriptive statistics
+```{r}
+
+ds_reg3_uu <- reg3_dLST_uu %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 3)
+
+ds_reg3_ur <- reg3_dLST_ur %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 3)
+
+ggplot(reg3_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(primary_city))) +
+  geom_boxplot() +
+  labs(title = "Oakland, San Francisco, San Jose Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+
+ggplot(reg3_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(primary_city))) +
+  geom_boxplot() +
+  labs(title = "Oakland, San Francisco, San Jose Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+```
+
+#REGION 6
+#Descriptive range of urban (Fresno) and rural LST for REGION 6
+```{r}
+#urban vs rural (as based on whether the zip code falls within the city limits of the main city in the region)
+reg6_urb <- region6 %>% filter(primary_city == "Fresno") %>% mutate('date' = make_date(year = year, month = month))
+reg6_rur <- region6 %>% filter(primary_city != "Fresno"  & primary_city != "Bakersfield"  & primary_city != "Coalinga")
+
+reg6_rurlst <- reg6_rur %>% group_by(year, month, region) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius)) %>%
+  mutate(region = 6) %>% 
+  mutate('date' = make_date(year = year, month = month))
+
+                  #sd = sd(celsius),
+                 # min = min(celsius),
+                 # max = max(celsius))
+
+
+reg6_urblst <- reg6_urb %>% group_by(year, month) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius),
+                  sd = sd(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>% 
+    mutate(region = 6) %>%
+  mutate('date' = make_date(year = year, month = month))
+
+head(reg6_urblst)
+head(reg6_rurlst)
+
+#subtract average rural LST for region from each urban zip code for that region
+# urbanLSTi - MEAN(ruralLST) = deltaLSTi
+# i = zipcode
+reg6_dLST_uu <- reg6_urb %>% 
+  left_join(reg6_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - min)
+reg6_dLST_ur <- reg6_urb %>% 
+  left_join(reg6_rurlst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - mean)
+
+#export CSV
+write.csv(reg6_dLST_ur, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg6_dLST_ur.csv", row.names=FALSE)
+write.csv(reg6_dLST_uu, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg6_dLST_uu.csv", row.names=FALSE)
+
+```
+
+#Region 6 Descriptive statistics
+```{r}
+
+ds_reg6_uu <- reg6_dLST_uu %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 6)
+
+ds_reg6_ur <- reg6_dLST_ur %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 6)
+
+ggplot(reg6_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Fresno Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+
+ggplot(reg6_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Fresno Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+```
+
+#REGION 6 Plotting
+```{r}
+
+plot6ur <- ggplot(reg6_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+   labs(title = "City of Fresno Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot6uu <- ggplot(reg6_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+   labs(title = "City of Fresno Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot6ur
+plot6uu
+```
+#REGION 8
+
+#Descriptive range of urban (Los Angeles) and rural LST for REGION 8
+```{r}
+#urban vs rural (as based on whether the zip code falls within the city limits of the main city in the region)
+reg8_urb <- region8 %>% filter(primary_city == "Los Angeles") %>% mutate('date' = make_date(year = year, month = month))
+reg8_rur <- region8 %>% filter(primary_city != "Los Angeles"  & primary_city != "Lancaster"  & primary_city != "San Fernando"  & primary_city != "Santa Clarita")
+
+reg8_rurlst <- reg8_rur %>% group_by(year, month, region) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius)) %>%
+  mutate(region = 8) %>% 
+  mutate('date' = make_date(year = year, month = month))
+
+                  #sd = sd(celsius),
+                 # min = min(celsius),
+                 # max = max(celsius))
+
+
+reg8_urblst <- reg8_urb %>% group_by(year, month) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius),
+                  sd = sd(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>% 
+    mutate(region = 8) %>%
+  mutate('date' = make_date(year = year, month = month))
+
+head(reg8_urblst)
+head(reg8_rurlst)
+
+reg8_dLST_uu <- reg8_urb %>% 
+  left_join(reg8_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - min)
+reg8_dLST_ur <- reg8_urb %>% 
+  left_join(reg8_rurlst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - mean)
+
+#export CSV
+write.csv(reg8_dLST_ur, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg8_dLST_ur.csv", row.names=FALSE)
+write.csv(reg8_dLST_uu, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg8_dLST_uu.csv", row.names=FALSE)
+```
+
+
+#Region 8 Descriptive statistics
+```{r}
+
+ds_reg8_uu <- reg8_dLST_uu %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 8)
+
+ds_reg8_ur <- reg8_dLST_ur %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 8)
+
+ggplot(reg8_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Los Angeles Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+
+ggplot(reg8_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of Los Angeles Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+```
+
+#REGION 8 Plotting
+```{r}
+
+plot8ur <- ggplot(reg8_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+   labs(title = "City of Los Angeles Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot8uu <- ggplot(reg8_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+   labs(title = "City of Los Angeles Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot8ur
+plot8uu
+```
+
+
+#REGION 10
+#Descriptive range of urban (San Diego) and rural LST for REGION 10
+```{r}
+#urban vs rural (as based on whether the zip code falls within the city limits of the main city in the region)
+reg10_urb <- region10 %>% filter(primary_city == "San Diego") %>% mutate('date' = make_date(year = year, month = month))
+reg10_rur <- region10 %>% filter(primary_city != "San Diego"  & primary_city != "Ocaenside"  & primary_city != "Ramona")
+
+reg10_rurlst <- reg10_rur %>% group_by(year, month, region) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius)) %>%
+  mutate(region = 10) %>%
+  mutate('date' = make_date(year = year, month = month))
+
+                  #sd = sd(celsius),
+                 # min = min(celsius),
+                 # max = max(celsius))
+
+
+reg10_urblst <- reg10_urb %>% group_by(year, month) %>% 
+  summarise(mean = mean(celsius),
+                  median = median(celsius),
+                  sd = sd(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>% 
+    mutate(region = 10) %>% 
+  mutate('date' = make_date(year = year, month = month))
+
+head(reg10_urblst)
+head(reg10_rurlst)
+
+reg10_dLST_uu <- reg10_urb %>% 
+  left_join(reg10_urblst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - min)
+reg10_dLST_ur <- reg10_urb %>% 
+  left_join(reg10_rurlst, by = 'date') %>% 
+  select(-"month.x", -"month.y", -"year.x", -"year.y", -"region.x", -"region.y") %>%
+  mutate(dLST = celsius - mean)
+
+#export CSV
+write.csv(reg10_dLST_ur, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg10_dLST_ur.csv", row.names=FALSE)
+write.csv(reg10_dLST_uu, "/Users/melissalasky/Dropbox/Year Two/Thesis/Raw Data/dLST CSVs/reg10_dLST_uu.csv", row.names=FALSE)
+```
+
+
+#Region 10 Descriptive statistics
+```{r}
+
+ds_reg10_uu <- reg10_dLST_uu %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 10)
+
+ds_reg10_ur <- reg10_dLST_ur %>% group_by(ZCTA) %>% 
+  summarise(mean = mean(dLST),
+                  median = median(celsius),
+                  min = min(celsius),
+                  max = max(celsius)) %>%
+  mutate(region = 10)
+
+ggplot(reg10_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of San Diego Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+
+ggplot(reg10_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = as.factor(ZCTA),
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_boxplot() +
+  labs(title = "City of San Diego Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs") +
+  coord_flip()
+```
+
+#REGION 10 Plotting
+```{r}
+
+plot10ur <- ggplot(reg10_dLST_ur,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego Urban minus Rural Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot10uu <- ggplot(reg10_dLST_uu,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = dLST,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego Urban minus Mean Urban Distribution by Zip Code 22-years Combined",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot10ur
+plot10uu
+
+```
+
+
+######
+######
+#95th Percentile by Region!
+#####
+#####
+
+#REGION 1, 3, 6, 8, 10 95th and 99th Percentiles
+```{r}
+#Percentile calculations for 5 regions
+reg1_95 <- quantile(reg1_urb$celsius, probs = c(0.05, 0.95))
+reg3oak <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "San Jose")
+reg3sf <- reg3_urb %>% filter(primary_city != "Oakland" & primary_city != "San Jose")
+reg3sj <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "Oakland")
+reg3oak_95 <-  quantile(reg3oak$celsius, probs = c(0.05, 0.95))
+reg3sf_95 <-  quantile(reg3sf$celsius, probs = c(0.05, 0.95))
+reg3sj_95 <-  quantile(reg3sj$celsius, probs = c(0.05, 0.95))
+reg6_95 <- quantile(reg6_urb$celsius, probs = c(0.05, 0.95))
+reg8_95 <- quantile(reg8_urb$celsius, probs = c(0.05, 0.95))
+reg10_95 <- quantile(reg10_urb$celsius, probs = c(0.05, 0.95))
+
+head(reg1_95)
+head(reg3oak_95)
+head(reg3sf_95)
+head(reg3sj_95)
+head(reg6_95)
+head(reg8_95)
+head(reg10_95)
+```
+
+#Filtering values greater than 95th percentile
+```{r}
+reg1_over95 <- reg1_urb %>% filter(celsius >= 22.03655) 
+reg3oak_over95 <- reg3oak %>% filter(celsius >= 16.518250)
+reg3sf_over95 <- reg3sf %>% filter(celsius >= 14.41179)
+reg3sj_over95 <- reg3sj %>% filter(celsius >= 18.4834)
+reg6_over95 <- reg6_urb %>% filter(celsius >= 25.93965)
+reg8_over95 <- reg8_urb %>% filter(celsius >= 20.29117)
+reg10_over95 <- reg10_urb %>% filter(celsius >= 20.09588)
+
+#Upon viewing the dates that generally correlate with the 95th percentile, it is observed that the months of June, July, August, and September are the months that fall within this percentile based on the average LST for that month.
+```
+
+#CALCULATING DLST PER REGION
+
+```{r}
+#this calculates the dLST using the minimum per year during the period of time that falls within the 95th percentile
+#dLST is the average monthly temperature minus the lowest average monthly temperature for that month for the whole region and grouped per zipcode
+reg1_95dLST <- reg1_over95 %>% 
+  left_join(reg1_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3oak_95dLST <- reg3oak_over95 %>% 
+  left_join(reg3oak_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3sf_95dLST <- reg3sf_over95 %>% 
+  left_join(reg3sf_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3sj_95dLST <- reg3sj_over95 %>% 
+  left_join(reg3sj_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg6_95dLST <- reg6_over95 %>% 
+  left_join(reg6_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg8_95dLST <- reg8_over95 %>% 
+  left_join(reg8_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg10_95dLST <- reg10_over95 %>% 
+  left_join(reg10_urblst, by = 'date') %>% mutate(dLST = celsius - min) %>%
+  select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+```
+
+
+#Grouping and plotting by zipcode per region
+```{r}
+reg1_year95dLST <- reg1_95dLST %>% group_by(ZCTA, year.y) %>% summarise(mean = mean(dLST))
+
+                                                                  
+plot1_95zip <- ggplot(reg1_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year.y,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Sacramento dLST for 95th percentile",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+reg3oak_year95dLST <- reg3oak_95dLST %>% group_by(ZCTA, year.y) %>% summarise(mean = mean(dLST))
+
+                                                                  
+plot3oak_95zip <- ggplot(reg3oak_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year.y,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Oakland dLST for 95th percentile",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+reg1_year95dLST <- reg1_95dLST %>% group_by(ZCTA, year.y) %>% summarise(mean = mean(dLST))
+
+                                                                  
+plot1_95zip <- ggplot(reg1_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year.y,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Sacramento dLST for 95th percentile",
+       x = "ZCTA",
+       y = "range of dLST celsius",
+       col = "ZCTAs")
+
+plot1_95zip
+plot3oak_95zip
+```
+
+######
+######
+#95th Percentile by Zipcode!
+#####
+#####
+
+#95 percentile per zip code for each of the 7 cities
+```{r}
+#Percentile calculations for 5 regions
+reg1_zip95 <- reg1_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg3oak <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "San Jose")
+reg3sf <- reg3_urb %>% filter(primary_city != "Oakland" & primary_city != "San Jose")
+reg3sj <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "Oakland")
+reg3oak_zip95 <-  reg3oak %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg3sf_zip95 <-  reg3sf %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg3sj_zip95 <-  reg3sj %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg6_zip95 <- reg6_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg8_zip95 <- reg8_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+reg10_zip95 <- reg10_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.95, na.rm=TRUE))
+
+head(reg1_zip95)
+head(reg3oak_zip95)
+head(reg3sf_zip95)
+head(reg3sj_zip95)
+head(reg6_zip95)
+head(reg8_zip95)
+head(reg10_zip95)
+```
+
+#CALCULATING DLST PER ZIPCODE PER REGION
+
+```{r}
+#Joining the 95th percentile by zipcode with each zip code per region and filtering any dates that are below the 95th percentile by zip code
+#these results should leave us with only the dates per zip code with a temperature that is above the 95th percentile for that zip code
+reg1_zipONLY95 <- reg1_zip95 %>% 
+  left_join(reg1_urb, by = 'ZCTA') %>% filter(celsius >= percentile) 
+#%>% mutate(dLST = celsius - percentile) #%>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+#Then we take the zip codes above the 95th percentile and find the difference in temperature as it compares to the LOWEST TEMPERATURE for that MONTH in that REGION
+reg1_zip95dLST <- reg1_zipONLY95 %>% left_join(reg1_urblst) %>% mutate(dLST = celsius - min)
+
+
+reg3oak_zipONLY95 <- reg3oak_zip95 %>% 
+  left_join(reg3oak, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3oak_zip95dLST <- reg3oak_zipONLY95 %>% left_join(reg3oak_urblst) %>% mutate(dLST = celsius - min)
+
+reg3sf_zipONLY95 <- reg3sf_zip95 %>% 
+  left_join(reg3sf, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3sf_zip95dLST <- reg3sf_zipONLY95 %>% left_join(reg3sf_urblst) %>% mutate(dLST = celsius - min)
+
+reg3sj_zipONLY95 <- reg3sj_zip95 %>% 
+  left_join(reg3sj, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3sj_zip95dLST <- reg3sj_zipONLY95 %>% left_join(reg3sj_urblst) %>% mutate(dLST = celsius - min)
+
+reg6_zipONLY95 <- reg6_zip95 %>% 
+  left_join(reg6_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg6_zip95dLST <- reg6_zipONLY95 %>% left_join(reg6_urblst) %>% mutate(dLST = celsius - min)
+
+
+reg8_zipONLY95 <- reg8_zip95 %>% 
+  left_join(reg8_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg8_zip95dLST <- reg8_zipONLY95 %>% left_join(reg8_urblst) %>% mutate(dLST = celsius - min)
+
+reg10_zipONLY95 <- reg10_zip95 %>% 
+  left_join(reg10_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg10_zip95dLST <- reg10_zipONLY95 %>% left_join(reg10_urblst) %>% mutate(dLST = celsius - min)
+
+```
+
+#PLOTTING 95TH PERCENTILE BY ZIP CODE PER REGION TO VISUALIZE HETEROGENEITY
+```{r}
+reg1_year95dLST <- reg1_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot1_year95zip <- ggplot(reg1_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Sacramento dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot1_year95zip
+
+
+reg3oak_year95dLST <- reg3oak_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3oak_year95zip <- ggplot(reg3oak_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Oakland dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3oak_year95zip
+
+
+reg3sf_year95dLST <- reg3sf_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3sf_year95zip <- ggplot(reg3sf_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Francisco dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3sf_year95zip
+
+reg3sj_year95dLST <- reg3sj_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3sj_year95zip <- ggplot(reg3sj_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Jose dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3sj_year95zip
+
+reg6_year95dLST <- reg6_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot6_year95zip <- ggplot(reg6_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Fresno dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot6_year95zip
+
+reg8_year95dLST <- reg8_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot8_year95zip <- ggplot(reg8_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Los Angeles dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot8_year95zip
+
+reg10_year95dLST <- reg10_zip95dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot10_year95zip <- ggplot(reg10_year95dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot10_year95zip
+```
+#99 percentile per zip code for each of the 7 cities
+```{r}
+#Percentile calculations for 5 regions
+reg1_zip99 <- reg1_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+#reg3oak <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "San Jose")
+#reg3sf <- reg3_urb %>% filter(primary_city != "Oakland" & primary_city != "San Jose")
+#reg3sj <- reg3_urb %>% filter(primary_city != "San Francisco" & primary_city != "Oakland")
+reg3oak_zip99 <-  reg3oak %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+reg3sf_zip99 <-  reg3sf %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+reg3sj_zip99 <-  reg3sj %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+reg6_zip99 <- reg6_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+reg8_zip99 <- reg8_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+reg10_zip99 <- reg10_urb %>% group_by(ZCTA) %>% summarize(percentile = quantile(celsius, probs=0.99, na.rm=TRUE))
+
+head(reg1_zip99)
+head(reg3oak_zip99)
+head(reg3sf_zip99)
+head(reg3sj_zip99)
+head(reg6_zip99)
+head(reg8_zip99)
+head(reg10_zip99)
+```
+
+#CALCULATING DLST PER ZIPCODE PER REGION
+
+```{r}
+#Joining the 95th percentile by zipcode with each zip code per region and filtering any dates that are below the 95th percentile by zip code
+#these results should leave us with only the dates per zip code with a temperature that is above the 95th percentile for that zip code
+reg1_zipONLY99 <- reg1_zip99 %>% 
+  left_join(reg1_urb, by = 'ZCTA') %>% filter(celsius >= percentile) 
+#%>% mutate(dLST = celsius - percentile) #%>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+#Then we take the zip codes above the 95th percentile and find the difference in temperature as it compares to the LOWEST TEMPERATURE for that MONTH in that REGION
+reg1_zip99dLST <- reg1_zipONLY99 %>% left_join(reg1_urblst) %>% mutate(dLST = celsius - min)
+
+
+reg3oak_zipONLY99 <- reg3oak_zip99 %>% 
+  left_join(reg3oak, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3oak_zip99dLST <- reg3oak_zipONLY99 %>% left_join(reg3oak_urblst) %>% mutate(dLST = celsius - min)
+
+
+reg3sf_zipONLY99 <- reg3sf_zip99 %>% 
+  left_join(reg3sf, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3sf_zip99dLST <- reg3sf_zipONLY99 %>% left_join(reg3sf_urblst) %>% mutate(dLST = celsius - min)
+
+reg3sj_zipONLY99 <- reg3sj_zip99 %>% 
+  left_join(reg3sj, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg3sj_zip99dLST <- reg3sj_zipONLY99 %>% left_join(reg3sj_urblst) %>% mutate(dLST = celsius - min)
+
+reg6_zipONLY99 <- reg6_zip99 %>% 
+  left_join(reg6_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg6_zip99dLST <- reg6_zipONLY99 %>% left_join(reg6_urblst) %>% mutate(dLST = celsius - min)
+
+
+reg8_zipONLY99 <- reg8_zip99 %>% 
+  left_join(reg8_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg8_zip99dLST <- reg8_zipONLY99 %>% left_join(reg8_urblst) %>% mutate(dLST = celsius - min)
+
+reg10_zipONLY99 <- reg10_zip99 %>% 
+  left_join(reg10_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+reg10_zip99dLST <- reg10_zipONLY99 %>% left_join(reg10_urblst) %>% mutate(dLST = celsius - min)
+
+```
+
+
+#PLOTTING 99Th PERCENTILE BY ZIP CODE PER REGION TO VISUALIZE HETEROGENEITY
+```{r}
+reg1_year99dLST <- reg1_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot1_year99zip <- ggplot(reg1_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Sacramento dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot1_year99zip
+
+
+reg3oak_year99dLST <- reg3oak_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3oak_year99zip <- ggplot(reg3oak_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Oakland dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3oak_year99zip
+
+
+reg3sf_year99dLST <- reg3sf_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3sf_year99zip <- ggplot(reg3sf_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Francisco dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3sf_year99zip
+
+reg3sj_year99dLST <- reg3sj_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot3sj_year99zip <- ggplot(reg3sj_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Jose dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot3sj_year99zip
+
+reg6_year99dLST <- reg6_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot6_year99zip <- ggplot(reg6_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Fresno dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot6_year99zip
+
+reg8_year99dLST <- reg8_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot8_year99zip <- ggplot(reg8_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Los Angeles dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot8_year99zip
+
+reg10_year99dLST <- reg10_zip99dLST %>% group_by(ZCTA, year) %>% summarise(mean = mean(dLST))
+plot10_year99zip <- ggplot(reg10_year99dLST,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = mean,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego dLST for 95th percentile",
+       x = "year",
+       y = "range of dLST (celsius)",
+       col = "ZCTAs")
+plot10_year99zip
+```
+
+#PLOTTING 95TH PERCENTILE CELSIUS PER ZIP CODE, cy = celsius year
+```{r}
+plot1_cy95zip <- ggplot(reg1_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Sacramento LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot1_cy95zip
+
+plot3oak_cy95zip <- ggplot(reg3oak_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Oakland LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot3oak_cy95zip
+
+plot3sf_cy95zip <- ggplot(reg3sf_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Francisco LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot3sf_cy95zip
+
+plot3sj_cy95zip <- ggplot(reg3sj_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Jose LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot3sj_cy95zip
+
+plot6_cy95zip <- ggplot(reg6_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Fresno LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot6_cy95zip
+
+plot8_cy95zip <- ggplot(reg8_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of Los Angeles dLST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot8_cy95zip
+
+plot10_cy95zip <- ggplot(reg10_zipONLY95,                            # Draw ggplot2 time series plot
+       aes(x = year,
+           y = celsius,
+           col = factor(ZCTA))) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego LST for 95th percentile",
+       x = "year",
+       y = "range of LST (celsius)",
+       col = "ZCTAs")
+plot10_cy95zip
+```
+###
+####dLST 95th percentile calculations; using 95th percentile on dLST
+###
+
+```{r}
+#Percentile calculations for 7 cities 
+reg1dLST_95 <- reg1_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg3oakdLST_95 <-  reg3oak_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg3sfdLST_95 <-  reg3sf_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg3sjdLST_95 <-  reg3sj_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg6dLST_95 <- reg6_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg8dLST_95 <- reg8_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+reg10dLST_95 <- reg10_dLST_uu %>% group_by(ZCTA) %>% summarize(percentile = quantile(dLST, probs=0.95, na.rm=TRUE))
+
+head(reg1dLST_95)
+head(reg3oakdLST_95)
+head(reg3sfdLST_95)
+head(reg3sjdLST_95)
+head(reg6dLST_95)
+head(reg8dLST_95)
+head(reg10dLST_95)
+
+ 
+
+#Joining the 95th percentile of dLST by zipcode with each zip code per region and filtering any dates that are below the 95th percentile by zip code
+#these results should leave us with only the dates per zip code with a temperature that is above the 95th percentile for that zip code
+reg1_dLSTzipONLY95 <- reg1dLST_95 %>% 
+  left_join(reg1_dLST_uu, by = 'ZCTA') %>% filter(dLST >= percentile) 
+#%>% mutate(dLST = celsius - percentile) #%>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3oak_dLSTzipONLY95 <- reg3oakdLST_95 %>% 
+  left_join(reg3oak_dLST_uu, by = 'ZCTA') %>% filter(dLST >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3sf_dLSTzipONLY95 <- reg3sfdLST_95 %>% 
+  left_join(reg3sf_dLST_uu, by = 'ZCTA') %>% filter(dLST >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg3sj_dLSTzipONLY95 <- reg3sjdLST_95 %>% 
+  left_join(reg3sj, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg6_dLSTzipONLY95 <- reg6dLST_95 %>% 
+  left_join(reg6_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+
+reg8_dLSTzipONLY95 <- reg8dLST_95 %>% 
+  left_join(reg8_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+  #select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+reg10_dLSTzipONLY95 <- reg10dLST_95 %>% 
+  left_join(reg10_urb, by = 'ZCTA') %>% filter(celsius >= percentile)
+#%>% mutate(dLST = celsius - min) %>%
+ # select(-"month.x", -"month.y", -"year.x", -"region.x", -"region.y")
+
+#Finding mean per year per zipcode
+reg1_yeardLST <- reg1_dLSTzipONLY95 %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3oak_yeardLST <- reg3oak_dLSTzipONLY95 %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3sf_yeardLST <- reg3sf_dLSTzipONLY95 %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3sj_yeardLST <- reg3sj_dLSTzipONLY95 %>% group_by(ZCTA, year) %>% summarise(mean = mean(celsius))
+reg6_yeardLST <- reg6_dLSTzipONLY95 %>% group_by(ZCTA, year) %>% summarise(mean = mean(celsius))
+reg8_yeardLST <- reg8_dLSTzipONLY95 %>% group_by(ZCTA, year) %>% summarise(mean = mean(celsius))
+reg10_yeardLST <- reg10_dLSTzipONLY95 %>% group_by(ZCTA, year) %>% summarise(mean = mean(celsius))
+
+
+ggplot(reg3sf_yeardLST,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = mean)) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego Values Above dLST 95th Percentile",
+       x = "year",
+       y = "range of LST (celsius)")
+```
+###
+####dLST HEAT WAVE days; using only months 6, 7, 8, 9
+###
+```{r}
+reg1_hotdLST <- reg1_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg3oak_hotdLST <- reg3oak_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg3sf_hotdLST <- reg3sf_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg3sj_hotdLST <- reg3sj_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg6_hotdLST <- reg6_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg8_hotdLST <- reg8_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+reg10_hotdLST <- reg10_dLST_uu %>% mutate(month = months(date)) %>% 
+  filter(month == "June" | month == "July" | month == "August" | month == "September" )
+
+#Finding mean per year per zipcode
+reg1_hotyeardLST <- reg1_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3oak_hotyeardLST <- reg3oak_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3sf_hotyeardLST <- reg3sf_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(dLST))
+reg3sj_hotyeardLST <- reg3sj_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(celsius))
+reg6_hotyeardLST <- reg6_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(celsius))
+reg8_hotyeardLST <- reg8_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(celsius))
+reg10_hotyeardLST <- reg10_hotdLST %>% group_by(ZCTA, date) %>% summarise(mean = mean(celsius))
+
+#Plotting heat wave days
+ggplot(reg10_hotyeardLST,                            # Draw ggplot2 time series plot
+       aes(x = date,
+           y = mean)) +
+  geom_line() +
+  facet_wrap(~ZCTA) +
+    geom_smooth(method = "lm", col = "black") +
+   labs(title = "City of San Diego Values Summer Months",
+       x = "year",
+       y = "range of dLST (celsius)")
+```
+
+
+
+
+
